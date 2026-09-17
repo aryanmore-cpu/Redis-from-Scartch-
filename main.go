@@ -89,7 +89,7 @@ func handleClient(conn net.Conn) {
 			}
 
 		case "SET":
-			if len(parts) > 3 {
+			if len(parts) >= 3 {
 				key := parts[1]
 				val := parts[2]
 				var expiresAt time.Time
@@ -150,6 +150,58 @@ func handleClient(conn net.Conn) {
 		default:
 			_, _ = conn.Write([]byte("-ERR unknown command\r\n"))
 
+		case "DEL":
+			if len(parts) >= 2 {
+
+				key := parts[1]
+				mu.Lock()
+				item, exists := kvStore[key]
+				deleted := 0
+
+				if exists {
+
+					// check if its already expired before deleting
+
+					if item.expiresAt.IsZero() || time.Now().Before(item.expiresAt) {
+						delete(kvStore, key)
+						deleted = 1
+					} else {
+						delete(kvStore, key) // clean up dead key
+					}
+
+				}
+
+				mu.Unlock()
+				_, _ = conn.Write([]byte(fmt.Sprintf(":%d\r\n", deleted)))
+			} else {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'del'\r\n"))
+			}
+
+		case "EXISTS":
+			if len(parts) >= 2 {
+
+				key := parts[1]
+				mu.Lock()
+				item, exists := kvStore[key]
+				found := 0
+
+				if exists {
+
+					// check if it exists and has NOT expired
+
+					if item.expiresAt.IsZero() || time.Now().Before(item.expiresAt) {
+
+						found = 1
+					} else {
+						delete(kvStore, key) // clean up dead key
+					}
+				}
+				mu.Unlock()
+
+				_, _ = conn.Write([]byte(fmt.Sprintf(":%d\r\n", found)))
+			} else {
+				_, _ = conn.Write([]byte(fmt.Sprintf("-ERR wrong number of arguments for 'exists'\r\n")))
+			}
 		}
 	}
 }
