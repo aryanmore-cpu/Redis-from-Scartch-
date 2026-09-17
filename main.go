@@ -202,6 +202,60 @@ func handleClient(conn net.Conn) {
 			} else {
 				_, _ = conn.Write([]byte(fmt.Sprintf("-ERR wrong number of arguments for 'exists'\r\n")))
 			}
+
+		case "INCR":
+			if len(parts) >= 2 {
+				key := parts[1]
+
+				mu.Lock()
+				item, exists := kvStore[key]
+
+				// check if expired
+
+				if exists && !item.expiresAt.IsZero() && time.Now().After(item.expiresAt) {
+
+					delete(kvStore, key)
+					exists = false
+
+				}
+
+				currentVal := 0
+				if exists {
+
+					// convert string value to integer
+
+					valInt, err := strconv.Atoi(item.value)
+					if err != nil {
+						mu.Unlock()
+						_, _ = conn.Write([]byte("-ERR value is not an integr or out of range \r\n "))
+
+						break
+					}
+
+					currentVal = valInt
+				}
+
+				// increment
+
+				currentVal++
+				newValStr := strconv.Itoa(currentVal)
+
+				// save back to store
+				kvStore[key] = Item{
+
+					value:     newValStr,
+					expiresAt: item.expiresAt, // preserve existing TTL if any
+				}
+
+				mu.Unlock()
+
+				// return new integrer via RESP integer format
+
+				_, _ = conn.Write([]byte(fmt.Sprintf(":%d\r\n", currentVal)))
+
+			} else {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'INCR'\r\n"))
+			}
 		}
 	}
 }
