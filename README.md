@@ -15,11 +15,11 @@ A multi-threaded, custom Redis-compatible in-memory key-value store built from s
 
 ## How to Run
 1. Start the server:
-      bash
+    ```bash
    go run main.go 
 
 2.  Connect using `redis-cli` (or any Telnet-compatible client):
-      bash
+   ```bash
    redis-cli -p 6379
    
 3.  Test the commands:
