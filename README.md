@@ -31,8 +31,6 @@ A lightweight, multi-threaded, Redis-compatible TCP server built from absolute s
 2. Start the TCP server:
    ```bash
    go run main.go
-
-
 3. Test the commands:
 ```redis
 PING
