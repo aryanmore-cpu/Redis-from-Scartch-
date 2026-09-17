@@ -4,6 +4,14 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
+)
+
+//  in-memory store and a mutex to make it thread-safe for concurrent clients
+
+var (
+	kvStore = make(map[string]string)
+	mu      sync.RWMutex
 )
 
 func main() {
@@ -48,33 +56,62 @@ func handleClient(conn net.Conn) {
 			break
 		}
 
-		// convert incoming bytes to a clean string
 		request := string(buf[:n])
 
-		// check what command the client sent (ignoring case and whitespace)
+		parts := strings.Fields(request) // splits by whitespace
+		if len(parts) == 0 {
+			continue
+		}
 
-		upperReq := strings.ToUpper(strings.TrimSpace(request))
+		command := strings.ToUpper(parts[0])
 
-		if strings.Contains(upperReq, "PING") {
+		switch command {
+
+		case "PING":
 			_, _ = conn.Write([]byte("+PONG\r\n"))
-		} else if strings.HasPrefix(upperReq, "ECHO") {
 
-			// if its an ECHO command, let's pull out the message part
-			// (for now , we'll echo back whatever followed ECHO)
+		case "ECHO":
 
-			parts := strings.SplitN(request, " ", 2)
 			if len(parts) > 1 {
-				message := strings.TrimSpace(parts[1])
-
-				// respond with a RESP bulk string or simple string
-
-				_, _ = conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(message), message)))
+				msg := parts[1]
+				_, _ = conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg)))
 			} else {
-				_, _ = conn.Write([]byte("-ERR wrong number of argumentsfor 'ECHO' command\r\n"))
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'echo'\r\n"))
 			}
-		} else {
-			_, _ = conn.Write([]byte("+OK\r\n"))
 
+		case "SET":
+			if len(parts) > 3 {
+				key := parts[1]
+				val := parts[2]
+
+				mu.Lock()
+				kvStore[key] = val
+				mu.Unlock()
+
+				_, _ = conn.Write([]byte("+OK\r\n"))
+			} else {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'SET'\r\n"))
+			}
+
+		case "GET":
+			if len(parts) >= 2 {
+				key := parts[1]
+
+				mu.RLock()
+				val, exists := kvStore[key]
+				mu.RUnlock()
+
+				if exists {
+					_, _ = conn.Write([]byte(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)))
+				} else {
+					_, _ = conn.Write([]byte("-$-1\r\n")) // redis null bulk string or missing keys
+				}
+			} else {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'GET'\r\n"))
+			}
+
+		default:
+			_, _ = conn.Write([]byte("-ERR unknown command\r\n"))
 		}
 	}
 
