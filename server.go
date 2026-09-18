@@ -138,6 +138,26 @@ func (s *Server) handleClient(conn net.Conn) {
 				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'incr'\r\n"))
 			}
 
+		case "EXPIRE":
+			if len(parts) >= 3 {
+				key := parts[1]
+				var seconds int
+				_, err := fmt.Sscanf(parts[2], "%d", &seconds)
+				if err != nil {
+					_, _ = conn.Write([]byte("-ERR value is not an integer or out of range\r\n"))
+					break
+				}
+
+				success := s.store.Expire(key, time.Duration(seconds)*time.Second)
+				if success {
+					_, _ = conn.Write([]byte(":1\r\n"))
+				} else {
+					_, _ = conn.Write([]byte(":0\r\n"))
+				}
+			} else {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'expire'\r\n"))
+			}
+
 		default:
 			_, _ = conn.Write([]byte(fmt.Sprintf("-ERR unknown command '%s'\r\n", command)))
 

@@ -118,3 +118,22 @@ func (s *Store) Incr(key string) (int, error) {
 	return currentVal, nil
 
 }
+
+func (s *Store) Expire(key string, ttl time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, exists := s.kvStore[key]
+	if !exists {
+		return false
+	}
+
+	if !item.expiresAt.IsZero() && time.Now().After(item.expiresAt) {
+		delete(s.kvStore, key)
+		return false
+	}
+
+	item.expiresAt = time.Now().Add(ttl)
+	s.kvStore[key] = item
+	return true
+}
