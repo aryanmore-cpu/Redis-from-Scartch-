@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -22,32 +23,84 @@ func NewServer(addr string) (*Server, error) {
 		listener: listener,
 		store:    NewStore(),
 	}, nil
-
 }
 
 func (s *Server) Start() error {
-	fmt.Println("redis server listenin on 127.0.0.1:6379...")
+	fmt.Println("Custom Redis server listening on 127.0.0.1:6379...")
 	for {
-
 		conn, err := s.listener.Accept()
 		if err != nil {
-			fmt.Println("error accepting connection:", err)
+			fmt.Println("Error accepting connection:", err)
 			continue
 		}
 		go s.handleClient(conn)
+	}
+}
 
+// parseCommand reads either a strict RESP array or falls back to plain text.
+func parseCommand(reader *bufio.Reader) ([]string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if len(line) == 0 {
+		return nil, nil
 	}
 
+	// If it starts with '*', it's a strict RESP array from redis-cli
+	if line[0] == '*' {
+		var numElements int
+		_, err := fmt.Sscanf(line, "*%d", &numElements)
+		if err != nil {
+			return nil, err
+		}
+
+		var args []string
+		for i := 0; i < numElements; i++ {
+			// Read bulk string length line (e.g. $3)
+			lenLine, err := reader.ReadString('\n')
+			if err != nil {
+				return nil, err
+			}
+			lenLine = strings.TrimRight(lenLine, "\r\n")
+			if len(lenLine) == 0 || lenLine[0] != '$' {
+				return nil, fmt.Errorf("expected bulk string header")
+			}
+
+			var strLen int
+			_, err = fmt.Sscanf(lenLine, "$%d", &strLen)
+			if err != nil {
+				return nil, err
+			}
+
+			// Read the actual string payload + \r\n
+			buf := make([]byte, strLen+2)
+			_, err = io.ReadFull(reader, buf)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, string(buf[:strLen]))
+		}
+		return args, nil
+	}
+
+	// Fallback to plain text space-separated commands (for manual testing/scripts)
+	return strings.Fields(line), nil
 }
 
 func (s *Server) handleClient(conn net.Conn) {
 	defer conn.Close()
-	scanner := bufio.NewScanner(conn)
+	reader := bufio.NewReader(conn)
 
-	for scanner.Scan() {
-
-		line := scanner.Text()
-		parts := strings.Fields(line)
+	for {
+		parts, err := parseCommand(reader)
+		if err != nil {
+			if err != io.EOF {
+				// Handle read errors if needed
+			}
+			break
+		}
 		if len(parts) == 0 {
 			continue
 		}
@@ -125,19 +178,6 @@ func (s *Server) handleClient(conn net.Conn) {
 				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'exists'\r\n"))
 			}
 
-		case "INCR":
-			if len(parts) >= 2 {
-				key := parts[1]
-				newVal, err := s.store.Incr(key)
-				if err != nil {
-					_, _ = conn.Write([]byte("-ERR value is not an integer or out of range\r\n"))
-				} else {
-					_, _ = conn.Write([]byte(fmt.Sprintf(":%d\r\n", newVal)))
-				}
-			} else {
-				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'incr'\r\n"))
-			}
-
 		case "EXPIRE":
 			if len(parts) >= 3 {
 				key := parts[1]
@@ -158,11 +198,21 @@ func (s *Server) handleClient(conn net.Conn) {
 				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'expire'\r\n"))
 			}
 
+		case "INCR":
+			if len(parts) >= 2 {
+				key := parts[1]
+				newVal, err := s.store.Incr(key)
+				if err != nil {
+					_, _ = conn.Write([]byte("-ERR value is not an integer or out of range\r\n"))
+				} else {
+					_, _ = conn.Write([]byte(fmt.Sprintf(":%d\r\n", newVal)))
+				}
+			} else {
+				_, _ = conn.Write([]byte("-ERR wrong number of arguments for 'incr'\r\n"))
+			}
+
 		default:
 			_, _ = conn.Write([]byte(fmt.Sprintf("-ERR unknown command '%s'\r\n", command)))
-
 		}
-
 	}
-
 }
